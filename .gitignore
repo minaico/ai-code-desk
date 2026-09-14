@@ -1,0 +1,21 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Runtime state: auth secret, PTY host key, remote machine keys, logs,
+# session history, agent transcripts. Never commit these.
+.data/
+*.log
+
+# Agent transcripts, in case a session ever runs in this folder
+.claudehis.txt
+.agyhis.txt
+
+# Local tool settings
+.claude/settings.local.json
+
+# Scratch files
+*.tmp.js
+*.tmp
+Thumbs.db
+desktop.ini

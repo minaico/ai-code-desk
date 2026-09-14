@@ -1,0 +1,31 @@
+# systemd unit for the PTY host on a Linux machine.
+#
+#   sudo cp scripts/web-terminal-host.service /etc/systemd/system/
+#   sudo systemctl edit --full web-terminal-host   # fix User= and WorkingDirectory=
+#   sudo systemctl enable --now web-terminal-host
+#   journalctl -u web-terminal-host -f
+#
+# It runs as an ordinary user on purpose. The PTY host opens shells, and those
+# shells inherit whatever this unit runs as — root here would mean a root shell
+# for anyone holding the machine key.
+
+[Unit]
+Description=Web Terminal PTY host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+WorkingDirectory=/home/CHANGE_ME/web-terminal
+ExecStart=/usr/bin/node server/pty-host.js
+Environment=PTY_HOST_BIND=0.0.0.0
+Environment=PTY_HOST_PORT=8777
+# Sessions do not survive a restart of this process, so do not restart it
+# eagerly on a clean exit — that is somebody deliberately stopping it.
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

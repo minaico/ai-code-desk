@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Windows Web Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:#111827; color:#e5e7eb; font-family:Segoe UI,Arial,sans-serif; }
+    body { display:flex; flex-direction:column; }
+    #top { height:48px; display:flex; align-items:center; gap:8px; padding:6px 10px; background:#0b1220; border-bottom:1px solid #263244; }
+    button, select, input { font:inherit; }
+    button { background:#1f2937; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 10px; cursor:pointer; }
+    button:hover { background:#374151; }
+    #tabs { display:flex; gap:4px; flex:1; overflow:auto; min-width:0; }
+    .tab { white-space:nowrap; }
+    .tab.active { background:#2563eb; border-color:#3b82f6; }
+    #terminalWrap { flex:1; min-height:0; padding:8px; }
+    .terminal { width:100%; height:100%; display:none; }
+    .terminal.active { display:block; }
+    #status { height:27px; padding:5px 10px; background:#0b1220; border-top:1px solid #263244; font-size:12px; color:#9ca3af; display:flex; justify-content:space-between; }
+    dialog { border:1px solid #374151; border-radius:10px; background:#111827; color:#e5e7eb; padding:18px; min-width:360px; }
+    dialog::backdrop { background:rgba(0,0,0,.65); }
+    label { display:block; margin:10px 0 5px; font-size:13px; color:#9ca3af; }
+    input, select { width:100%; padding:8px; background:#0b1220; color:#e5e7eb; border:1px solid #374151; border-radius:6px; }
+    .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <button id="newBtn">＋ Terminal</button>
+    <div id="tabs"></div>
+    <button id="renameBtn">Rename</button>
+    <button id="restartBtn">Restart</button>
+    <button id="killBtn">Kill</button>
+  </div>
+  <div id="terminalWrap"></div>
+  <div id="status"><span id="leftStatus">Connecting...</span><span id="rightStatus">Windows Web Terminal</span></div>
+
+  <dialog id="newDialog">
+    <form method="dialog" id="newForm">
+      <h3 style="margin-top:0">New Terminal</h3>
+      <label>Shell</label>
+      <select id="shell">
+        <option value="powershell">Windows PowerShell</option>
+        <option value="pwsh">PowerShell 7</option>
+        <option value="cmd">CMD</option>
+      </select>
+      <label>Working directory</label>
+      <input id="cwd" value="">
+      <label>Tab name</label>
+      <input id="title" placeholder="PowerShell">
+      <div class="actions">
+        <button value="cancel">Cancel</button>
+        <button id="createBtn" value="default">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module">
+    import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/+esm";
+    import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
+
+    const tabs = document.querySelector("#tabs");
+    const wrap = document.querySelector("#terminalWrap");
+    const status = document.querySelector("#leftStatus");
+    const dialog = document.querySelector("#newDialog");
+    const form = document.querySelector("#newForm");
+    const shellEl = document.querySelector("#shell");
+    const cwdEl = document.querySelector("#cwd");
+    const titleEl = document.querySelector("#title");
+
+    const clients = new Map(); // id -> { term, fit, box }
+    let activeId = null;
+    let ws;
+
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}/terminal`);
+      ws.onopen = () => {
+        status.textContent = "Connected";
+        if (clients.size === 0) openNew();
+      };
+      ws.onclose = () => {
+        status.textContent = "Disconnected — reconnecting...";
+        setTimeout(connect, 1500);
+      };
+      ws.onmessage = ev => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "sessions") syncSessions(msg.sessions);
+        if (msg.type === "created") addLocal(msg.session);
+        if (msg.type === "attached") {}
+        if (msg.type === "output") {
+          // Output is routed by the WebSocket connection's currently attached session.
+          if (activeId && clients.has(activeId)) clients.get(activeId).term.write(msg.data);
+        }
+        if (msg.type === "exit") {
+          if (activeId && clients.has(activeId))
+            clients.get(activeId).term.write(`\\r\\n[process exited: ${msg.exitCode}]\\r\\n`);
+        }
+        if (msg.type === "error") status.textContent = "Error: " + msg.message;
+      };
+    }
+
+    // A single socket cannot safely multiplex output by active tab because a session can
+    // continue producing output while another tab is active. We therefore send a target
+    // marker before attach and the server implementation below is intentionally simple:
+    // active-tab attach receives its stream. For best multi-session fidelity, use one
+    // WebSocket per tab. This client implements that model.
+    function makeSocket(id, onMessage) {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const s = new WebSocket(`${proto}//${location.host}/terminal`);
+      s.onopen = () => s.send(JSON.stringify({type:"attach", sessionId:id}));
+      s.onmessage = e => onMessage(JSON.parse(e.data));
+      return s;
+    }
+
+    // Replace the initial control socket with per-session sockets.
+    let control = null;
+    const sessionSockets = new Map();
+
+    function ensureSessionSocket(id) {
+      if (sessionSockets.has(id)) return sessionSockets.get(id);
+      const s = makeSocket(id, msg => {
+        if (msg.type === "output" && clients.has(id)) clients.get(id).term.write(msg.data);
+        if (msg.type === "exit" && clients.has(id)) clients.get(id).term.write(`\\r\\n[process exited: ${msg.exitCode}]\\r\\n`);
+        if (msg.type === "error") status.textContent = "Error: " + msg.message;
+      });
+      sessionSockets.set(id, s);
+      return s;
+    }
+
+    function send(id, msg) {
+      const s = ensureSessionSocket(id);
+      const payload = JSON.stringify(msg);
+      if (s.readyState === WebSocket.OPEN) s.send(payload);
+      else s.addEventListener("open", () => s.send(payload), {once:true});
+    }
+
+    function addLocal(session) {
+      if (clients.has(session.id)) return;
+      const box = document.createElement("div");
+      box.className = "terminal";
+      wrap.appendChild(box);
+
+      const term = new Terminal({
+        cursorBlink: true,
+        convertEol: true,
+        scrollback: 5000,
+        fontSize: 14,
+        theme: { background:"#111827", foreground:"#e5e7eb", cursor:"#60a5fa" }
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(box);
+      fit.fit();
+
+      term.onData(data => send(session.id, {type:"input", sessionId:session.id, data}));
+      term.onResize(({cols,rows}) => send(session.id, {type:"resize", sessionId:session.id, cols, rows}));
+
+      clients.set(session.id, {term, fit, box, meta:session});
+      ensureSessionSocket(session.id);
+      select(session.id);
+    }
+
+    function removeLocal(id) {
+      const c = clients.get(id);
+      if (c) { c.term.dispose(); c.box.remove(); }
+      clients.delete(id);
+      const s = sessionSockets.get(id);
+      if (s) s.close();
+      sessionSockets.delete(id);
+      if (activeId === id) activeId = null;
+    }
+
+    function syncSessions(list) {
+      const ids = new Set(list.map(x => x.id));
+      list.forEach(x => {
+        if (!clients.has(x.id)) addLocal(x);
+        else clients.get(x.id).meta = x;
+      });
+      [...clients.keys()].forEach(id => { if (!ids.has(id)) removeLocal(id); });
+      renderTabs(list);
+      if (!activeId && list[0]) select(list[0].id);
+    }
+
+    function renderTabs(list) {
+      tabs.replaceChildren();
+      for (const s of list) {
+        const b = document.createElement("button");
+        b.className = "tab" + (s.id === activeId ? " active" : "");
+        b.textContent = `${s.title}  ×`;
+        b.title = `${s.shell} — ${s.cwd}`;
+        b.addEventListener("click", e => {
+          if (e.offsetX > b.clientWidth - 18) {
+            send(s.id, {type:"kill", sessionId:s.id});
+          } else select(s.id);
+        });
+        tabs.appendChild(b);
+      }
+    }
+
+    function select(id) {
+      if (!clients.has(id)) return;
+      activeId = id;
+      for (const [sid,c] of clients) c.box.classList.toggle("active", sid === id);
+      clients.get(id).fit.fit();
+      clients.get(id).term.focus();
+      const m = clients.get(id).meta;
+      status.textContent = `${m.shell} | ${m.cwd} | ${id}`;
+      fetch("/health").catch(()=>{});
+      renderTabs([...clients.values()].map(x => x.meta));
+    }
+
+    function openNew() {
+      cwdEl.value = "";
+      titleEl.value = "";
+      dialog.showModal();
+      setTimeout(() => shellEl.focus(), 0);
+    }
+
+    document.querySelector("#newBtn").onclick = openNew;
+    document.querySelector("#restartBtn").onclick = () => activeId && send(activeId, {type:"restart", sessionId:activeId});
+    document.querySelector("#killBtn").onclick = () => activeId && send(activeId, {type:"kill", sessionId:activeId});
+    document.querySelector("#renameBtn").onclick = () => {
+      if (!activeId) return;
+      const name = prompt("Tên tab:", clients.get(activeId)?.meta.title || "");
+      if (name) send(activeId, {type:"rename", sessionId:activeId, title:name});
+    };
+
+    form.addEventListener("submit", e => {
+      if (e.submitter?.value !== "default") return;
+      e.preventDefault();
+      const shell = shellEl.value;
+      const cwd = cwdEl.value.trim();
+      const title = titleEl.value.trim() || shell;
+      // Creation goes over a temporary control socket.
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const s = new WebSocket(`${proto}//${location.host}/terminal`);
+      s.onopen = () => s.send(JSON.stringify({type:"create", shell, cwd, title, cols:120, rows:30}));
+      s.onmessage = e2 => {
+        const msg = JSON.parse(e2.data);
+        if (msg.type === "created") {
+          addLocal(msg.session);
+          s.close();
+          dialog.close();
+        }
+      };
+    });
+
+    window.addEventListener("resize", () => {
+      if (activeId && clients.has(activeId)) clients.get(activeId).fit.fit();
+    });
+
+    // Start with a control connection only to keep the server alive/receive session list.
+    connect();
+  </script>
+</body>
+</html>
