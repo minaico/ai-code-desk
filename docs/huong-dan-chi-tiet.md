@@ -58,7 +58,7 @@ cd C:\claudedeck
 .\scripts\start.ps1
 ```
 
-Mở `http://SERVER-IP:8080`.
+Mở `http://SERVER-IP:9777`.
 
 `install.ps1` chạy `npm install`, `npm run build`, băm mật khẩu bằng scrypt và
 lưu **hash** vào biến môi trường máy (mật khẩu gốc không bao giờ được ghi ra đâu cả).
@@ -72,7 +72,7 @@ npm install
 npm run build          # build UI vào dist\
 npm start              # web server (tự spawn PTY host nếu chưa chạy)
 npm run host           # chỉ chạy PTY host
-npm run dev            # Vite dev server cho UI (proxy tay tới :8080)
+npm run dev            # Vite dev server cho UI (proxy tay tới :9777)
 npm test               # toàn bộ test
 ```
 
@@ -92,7 +92,7 @@ node scripts\hash-password.js
 .\scripts\install-service.ps1 `
     -PasswordHash "scrypt$..." `
     -Roots "C:\Users\svc-webterm\projects" `
-    -Port 8080
+    -Port 9777
 
 # 3. Kiểm tra
 .\scripts\status-service.ps1
@@ -219,7 +219,7 @@ tunnel: webterm
 credentials-file: C:\Users\<user>\.cloudflared\<id>.json
 ingress:
   - hostname: term.example.com
-    service: http://127.0.0.1:8080
+    service: http://127.0.0.1:9777
   - service: http_status:404
 ```
 
@@ -230,7 +230,7 @@ cloudflared service install
 
 Rồi bật **Cloudflare Access** cho `term.example.com` (Zero Trust → Access →
 Applications) để có thêm một lớp xác thực trước cả trang login. Với cách này
-**không cần mở cổng 8080 ra Internet**.
+**không cần mở cổng 9777 ra Internet**.
 
 ---
 
@@ -495,18 +495,18 @@ Nếu thư mục làm việc không ghi được, file rơi về `.data/agent-lo
 
 ### Máy nào chạy cái gì
 
-| | Web server (8080) | PTY host (8777) |
+| | Web server (9777) | PTY host (8777) |
 |---|---|---|
 | Máy điều khiển — nơi bạn mở trình duyệt | **có** | có (cho session của chính nó) |
 | Máy từ xa, ví dụ 192.168.192.42 | **không cần** | **có, đây là cái duy nhất cần chạy** |
 
-Máy 42 **không chạy web server và không mở cổng 8080**. Nó chỉ chạy PTY host và
+Máy 42 **không chạy web server và không mở cổng 9777**. Nó chỉ chạy PTY host và
 lắng nghe **TCP 8777** (đổi bằng `PTY_HOST_PORT`). Trình duyệt của bạn vẫn chỉ
 nói chuyện với máy điều khiển; máy điều khiển mới là bên mở kết nối tới 8777 của
 máy 42.
 
 ```text
-iPhone ──HTTPS──> máy điều khiển :8080 ──TCP 8777──> máy 192.168.192.42
+iPhone ──HTTPS──> máy điều khiển :9777 ──TCP 8777──> máy 192.168.192.42
 ```
 
 ### Trên máy 42 — một lệnh
@@ -863,7 +863,7 @@ Nhận về: `ready`, `sessions`, `history`, `output`, `exit`, `cwd`, `reset`,
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `PORT` | `8080` | cổng web |
+| `PORT` | `9777` | cổng web |
 | `HOST` | `0.0.0.0` | địa chỉ bind |
 | `PTY_HOST_PORT` | `8777` | cổng PTY host |
 | `PTY_HOST_BIND` | `127.0.0.1` | đặt `0.0.0.0` để máy khác trong LAN điều khiển được (`resume.ps1` tự đặt khi nhóm có máy khác) |

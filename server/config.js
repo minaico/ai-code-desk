@@ -45,7 +45,14 @@ const passwordFromEnv =
 const config = {
   rootDir: ROOT_DIR,
   dataDir: DATA_DIR,
-  port: num(process.env.PORT, 8080),
+  /**
+   * 9777, not 8080. Everything picks 8080 - a dev server, a proxy, someone
+   * else's container - and the one time it matters you are trying to reach a
+   * shell from a phone. It pairs with the PTY host on 8777 so the two are one
+   * thing to remember: 9777 is the UI, 8777 is the terminals. 8778 is left
+   * alone; a sibling tool already listens there on these machines.
+   */
+  port: num(process.env.PORT, 9777),
   host: process.env.HOST || "0.0.0.0",
   ptyHostPort: num(process.env.PTY_HOST_PORT, 8777),
   // 127.0.0.1 by default. Set to 0.0.0.0 to let other machines on the LAN

@@ -81,7 +81,7 @@ function Resolve-WtPort {
     return $Default
 }
 
-$webPort = Resolve-WtPort -Override $Port -Name "PORT" -Default 8080
+$webPort = Resolve-WtPort -Override $Port -Name "PORT" -Default 9777
 $hostPort = Resolve-WtPort -Override $PtyHostPort -Name "PTY_HOST_PORT" -Default 8777
 
 # Only the values that differ from what the child would read on its own need

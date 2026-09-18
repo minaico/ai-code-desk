@@ -38,7 +38,7 @@ function Assert-WtAdmin {
 function Get-WtPort {
     $p = [Environment]::GetEnvironmentVariable("PORT", "Machine")
     if (-not $p) { $p = $env:PORT }
-    if (-not $p) { $p = "8080" }
+    if (-not $p) { $p = "9777" }
     return [int]$p
 }
 

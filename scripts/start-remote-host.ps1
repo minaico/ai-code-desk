@@ -3,7 +3,7 @@
   Run this machine as a *remote terminal machine* for another Web Terminal.
 
 .DESCRIPTION
-  Only the PTY host runs here - there is no web server and no port 8080 on this
+  Only the PTY host runs here - there is no web server and no port 9777 on this
   machine. The controlling machine connects straight to the PTY host on
   PTY_HOST_PORT (default 8777) and authenticates with the key printed below.
 

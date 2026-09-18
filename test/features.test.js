@@ -6,7 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
-const { Stack, wait, freePort, SHELL, WINDOWS } = require("./helpers");
+const { Stack, wait, freePort, SHELL, CWD_SHELL, WINDOWS } = require("./helpers");
 
 test("Session history", { timeout: 120000 }, async (t) => {
   const stack = new Stack();
@@ -116,9 +116,23 @@ test("Agent transcript", { timeout: 120000 }, async (t) => {
 
   await t.test("typing an agent command starts a transcript in that folder", async () => {
     const WebSocket = require("ws");
-    const created = await stack.api("POST", "/api/sessions", { shell: SHELL, cwd: workDir, title: "Agent" });
+    // A stand-in agent, not the real one. Detection is on the command line the
+    // user submits, so a line that merely mentions the name is recognised
+    // exactly like `claude` itself - and unlike the real thing this is the same
+    // program on every machine: it reads a line, answers it, and leaves on a
+    // word. Running the real agent made this test depend on whether it happened
+    // to be installed on the machine, and on how fast it started.
+    const fake = WINDOWS
+      ? `& { while($true){ $l = Read-Host; if($l -eq 'thoat'){ break }; "tra loi: $l" } } # claude`
+      : `while read l; do [ "$l" = thoat ] && break; echo "tra loi: $l"; done # claude`;
+    const created = await stack.api("POST", "/api/sessions", { shell: CWD_SHELL, cwd: workDir, title: "Agent" });
     assert.equal(created.status, 201, JSON.stringify(created.body));
     const id = created.body.session.id;
+    const agentNow = async () => {
+      const list = await stack.api("GET", "/api/sessions");
+      const s = (list.body.sessions || []).find((x) => x.id === id);
+      return s ? s.agent : undefined;
+    };
 
     const ws = new WebSocket(stack.wsUrl());
     await new Promise((res, rej) => {
@@ -126,16 +140,26 @@ test("Agent transcript", { timeout: 120000 }, async (t) => {
       ws.once("error", rej);
     });
     ws.send(JSON.stringify({ type: "attach", sessionId: id }));
-    await wait(1200);
+    await wait(2500); // the shell's first prompt
 
-    // "claude" is not installed in the test environment; detection is on the
-    // command line the user submits, which is exactly the real behaviour.
-    ws.send(JSON.stringify({ type: "input", sessionId: id, data: "claude\r" }));
-    await wait(1500);
+    ws.send(JSON.stringify({ type: "input", sessionId: id, data: `${fake}\r` }));
+    await wait(2000);
     ws.send(JSON.stringify({ type: "input", sessionId: id, data: "lam tiep\r" }));
     await wait(1500);
-    ws.send(JSON.stringify({ type: "input", sessionId: id, data: "echo ket-qua-cua-agent\r" }));
-    await wait(6000); // let the idle flush write the answer block
+    ws.send(JSON.stringify({ type: "input", sessionId: id, data: "ket-qua-cua-agent\r" }));
+    await wait(2000);
+
+    assert.equal(await agentNow(), "claude", "while it runs, the session must say which agent it is");
+
+    // Leaving the agent ends the transcript, and ending it flushes it.
+    ws.send(JSON.stringify({ type: "input", sessionId: id, data: "thoat\r" }));
+    const deadline = Date.now() + 15000;
+    let after = await agentNow();
+    while (after && Date.now() < deadline) {
+      await wait(250);
+      after = await agentNow();
+    }
+    assert.ok(!after, `the tab must stop reporting an agent after it exits, got ${JSON.stringify(after)}`);
 
     const file = path.join(workDir, ".claudehis.txt");
     assert.ok(fs.existsSync(file), ".claudehis.txt must be created in the session folder");
@@ -146,9 +170,6 @@ test("Agent transcript", { timeout: 120000 }, async (t) => {
     assert.match(text, /--- CLAUDE/, "the answer block must be recorded");
     assert.match(text, /ket-qua-cua-agent/, "terminal output must be captured");
     assert.equal(/\u001b\[/.test(text), false, "ANSI escapes must not reach the transcript");
-
-    const listed = (await stack.api("GET", "/api/sessions")).body.sessions.find((s) => s.id === id);
-    assert.equal(listed.agent, "claude", "the session must report which agent it is logging");
 
     ws.close();
     await stack.api("DELETE", `/api/sessions/${id}`);

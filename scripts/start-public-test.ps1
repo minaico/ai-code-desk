@@ -1,5 +1,5 @@
 param(
-    [int]$Port = 8080,
+    [int]$Port = 9777,
     [string]$ProjectDir = $PSScriptRoot,
     [switch]$NoPassword
 )

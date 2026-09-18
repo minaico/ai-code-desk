@@ -1,7 +1,7 @@
 # Cloudflare public test script
 
 Script này dùng Cloudflare Quick Tunnel để expose Web Terminal đang chạy ở
-`http://127.0.0.1:8080` ra Internet bằng URL ngẫu nhiên `*.trycloudflare.com`.
+`http://127.0.0.1:9777` ra Internet bằng URL ngẫu nhiên `*.trycloudflare.com`.
 
 ## Cách dùng
 
@@ -21,7 +21,7 @@ npm start
 Sau đó chạy:
 
 ```text
-cloudflared tunnel --url http://127.0.0.1:8080
+cloudflared tunnel --url http://127.0.0.1:9777
 ```
 
 Cloudflare sẽ in ra URL kiểu:

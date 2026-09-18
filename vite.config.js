@@ -2,9 +2,9 @@ import { defineConfig } from "vite";
 
 /**
  * Where the real app is. `npm run dev` only builds the frontend; the sessions,
- * the history and the WebSocket all live in server/server.js on 8080.
+ * the history and the WebSocket all live in server/server.js on 9777.
  */
-const target = `http://127.0.0.1:${process.env.PORT || 8080}`;
+const target = `http://127.0.0.1:${process.env.PORT || 9777}`;
 
 export default defineConfig({
   build: { outDir: "dist", emptyOutDir: true },
@@ -20,7 +20,7 @@ export default defineConfig({
      *
      * changeOrigin stays false on purpose: server.js compares the Origin header
      * against Host and rejects the upgrade when they differ. Rewriting Host to
-     * 127.0.0.1:8080 while the browser still sends Origin localhost:5173 is
+     * 127.0.0.1:9777 while the browser still sends Origin localhost:5173 is
      * precisely that mismatch, so the proxy has to leave Host alone.
      */
     proxy: {

@@ -168,7 +168,7 @@ Linux:
 git clone https://github.com/minaico/ai-code-desk.git ai-code-desk && cd ai-code-desk
 npm ci && npm run build
 export WEB_TERMINAL_PASSWORD_HASH="$(node scripts/hash-password.js 'mat-khau-that-dai')"
-npm start          # web server ở :8080; tự khởi động PTY host
+npm start          # web server ở :9777; tự khởi động PTY host
 ```
 
 Yêu cầu: Node.js 20 trở lên (phát triển trên 24; bộ test cần 22+). `node-pty` có sẵn bản dựng cho Windows và
@@ -180,7 +180,7 @@ macOS; trên Linux phải biên dịch (`sudo apt install -y build-essential pyt
 
 ### 2. Mỗi dự án một tab, rồi mở agent
 
-Mở `http://<ip-của-máy>:8080` rồi đăng nhập. Với mỗi dự án:
+Mở `http://<ip-của-máy>:9777` rồi đăng nhập. Với mỗi dự án:
 
 1. Bấm **＋** (hoặc `Ctrl+K`), chọn thư mục, và điền lệnh của agent vào *Lệnh chạy ngay* — `claude`, `codex`,
    `agy`, `gemini`. Hoặc bấm nút của agent ở panel bên rồi `cd` vào dự án.
@@ -233,7 +233,7 @@ tunnel: ai-code-desk
 credentials-file: C:\Users\<ban>\.cloudflared\<tunnel-id>.json
 ingress:
   - hostname: code.example.com
-    service: http://127.0.0.1:8080
+    service: http://127.0.0.1:9777
   - service: http_status:404
 ```
 ```powershell
@@ -321,7 +321,7 @@ Biến môi trường (danh sách đầy đủ ở [hướng dẫn chi tiết](d
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `PORT` / `HOST` | `8080` / `0.0.0.0` | web server |
+| `PORT` / `HOST` | `9777` / `0.0.0.0` | web server |
 | `PTY_HOST_PORT` / `PTY_HOST_BIND` | `8777` / `127.0.0.1` | PTY host; bind `0.0.0.0` để máy khác tới được |
 | `PTY_HOST_TLS` | `1` | mã hoá kênh giữa các máy bằng TLS-PSK; đặt `0` chỉ khi cần nói với máy chạy bản cũ |
 | `WEB_TERMINAL_PASSWORD_HASH` | — | hash scrypt từ `node scripts/hash-password.js` (khuyến nghị) |
@@ -369,7 +369,7 @@ npm install
 npm run build      # giao diện vào dist/
 npm start          # web server (tự khởi động PTY host nếu cần)
 npm run host       # chỉ PTY host
-npm run dev        # Vite dev server ở :5173, chuyển /api và WebSocket sang :8080
+npm run dev        # Vite dev server ở :5173, chuyển /api và WebSocket sang :9777
 npm test           # 184 test
 ```
 

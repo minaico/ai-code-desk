@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Start the PTY host on a Linux machine so a Web Terminal running elsewhere can
-# open shells on it. This machine runs no web server and opens no port 8080 —
+# open shells on it. This machine runs no web server and opens no port 9777 —
 # only the PTY host on TCP 8777.
 #
 #   ./scripts/start-remote-host.sh                 foreground, prints the key

@@ -14,7 +14,7 @@
 
 .EXAMPLE
   .\scripts\start-cloudflare-test.ps1
-  .\scripts\start-cloudflare-test.ps1 -Port 8080 -StartServer
+  .\scripts\start-cloudflare-test.ps1 -Port 9777 -StartServer
 #>
 [CmdletBinding()]
 param(

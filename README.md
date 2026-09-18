@@ -168,7 +168,7 @@ Linux:
 git clone https://github.com/minaico/ai-code-desk.git ai-code-desk && cd ai-code-desk
 npm ci && npm run build
 export WEB_TERMINAL_PASSWORD_HASH="$(node scripts/hash-password.js 'choose-a-long-password')"
-npm start          # web server on :8080; it starts the PTY host itself
+npm start          # web server on :9777; it starts the PTY host itself
 ```
 
 Requirements: Node.js 20+ (developed on 24; the test suite needs 22+). `node-pty` ships prebuilt binaries for
@@ -180,7 +180,7 @@ Windows and macOS; on Linux it compiles (`sudo apt install -y build-essential py
 
 ### 2. Open a tab per project and start the agents
 
-Open `http://<machine-ip>:8080` and sign in. Then, for each project:
+Open `http://<machine-ip>:9777` and sign in. Then, for each project:
 
 1. Press **＋** (or `Ctrl+K`), choose the folder, and put the agent's command in *Run on start* —
    `claude`, `codex`, `agy`, `gemini`. Or click the agent's button in the side panel and `cd` into the project.
@@ -234,7 +234,7 @@ tunnel: ai-code-desk
 credentials-file: C:\Users\<you>\.cloudflared\<tunnel-id>.json
 ingress:
   - hostname: code.example.com
-    service: http://127.0.0.1:8080
+    service: http://127.0.0.1:9777
   - service: http_status:404
 ```
 ```powershell
@@ -322,7 +322,7 @@ Environment variables (the full list is in the [detailed guide](docs/huong-dan-c
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PORT` / `HOST` | `8080` / `0.0.0.0` | web server |
+| `PORT` / `HOST` | `9777` / `0.0.0.0` | web server |
 | `PTY_HOST_PORT` / `PTY_HOST_BIND` | `8777` / `127.0.0.1` | PTY host; bind `0.0.0.0` so other machines can reach it |
 | `PTY_HOST_TLS` | `1` | encrypt the machine-to-machine channel with TLS-PSK; `0` only to reach an older peer |
 | `WEB_TERMINAL_PASSWORD_HASH` | — | scrypt hash from `node scripts/hash-password.js` (recommended) |
@@ -370,7 +370,7 @@ npm install
 npm run build      # UI into dist/
 npm start          # web server (spawns the PTY host if needed)
 npm run host       # PTY host only
-npm run dev        # Vite dev server on :5173, proxying /api and the WebSocket to :8080
+npm run dev        # Vite dev server on :5173, proxying /api and the WebSocket to :9777
 npm test           # 184 tests
 ```
 
