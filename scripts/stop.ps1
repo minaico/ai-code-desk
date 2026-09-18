@@ -35,9 +35,17 @@ function Stop-ByPort {
 }
 
 Write-WtHeader "Stopping"
-Stop-ByPort -TargetPort $Port -Label "web server"
 
-if ($WebOnly) {
+# -Port means the web port, but it is also what people reach for when the thing
+# they mean to stop is the PTY host. Calling that "web server" and then adding
+# "sessions survive" misreported the one action here that costs terminals.
+$stoppingHost = ($Port -eq $hostPort)
+$firstLabel = if ($stoppingHost) { "PTY host" } else { "web server" }
+Stop-ByPort -TargetPort $Port -Label $firstLabel
+
+if ($stoppingHost) {
+    Write-WtWarn "That port is the PTY host: every terminal session on this machine was killed."
+} elseif ($WebOnly) {
     Write-WtInfo "PTY host left running - sessions survive."
 } else {
     Stop-ByPort -TargetPort $hostPort -Label "PTY host"

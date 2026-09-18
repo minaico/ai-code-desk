@@ -103,9 +103,23 @@ $key = & $node (Join-Path $installDir "scripts\host-key.js")
 Write-Host ""
 Write-Host "  $key" -ForegroundColor Green
 Write-Host ""
-Write-WtInfo "On the controlling machine: sidebar -> Máy -> Thêm máy"
-Write-WtInfo "  Địa chỉ: <one of the IPs above>    Cổng: $Port    Key: the value above"
-Write-WtWarn "The link is authenticated but NOT encrypted. Keep it on a trusted LAN or a VPN."
+# Kept ASCII on purpose: Windows PowerShell 5.1 reads a script without a BOM in
+# the console code page, so Vietnamese here came out as mojibake on the very
+# machine this script exists to set up.
+Write-WtInfo "On the controlling machine: sidebar -> Machines -> Add a machine"
+Write-WtInfo "  Address: <one of the IPs above>    Port: $Port    Key: the value above"
+
+$tls = [Environment]::GetEnvironmentVariable("PTY_HOST_TLS", "Machine")
+if ($env:PTY_HOST_TLS) { $tls = $env:PTY_HOST_TLS }
+if ($tls -eq "0") {
+    Write-WtWarn "PTY_HOST_TLS=0: the link is authenticated but NOT encrypted. Keep it on a LAN or a VPN."
+} else {
+    Write-WtOk "The channel is TLS-PSK: this key both authenticates and encrypts it."
+    Write-WtInfo "The controlling machine must run this version too, and be told to use it:"
+    Write-WtInfo "  node scripts\machines.js tls <this machine's id> on"
+    Write-WtInfo "An older one speaks only the plaintext protocol and will not connect."
+}
+Write-WtWarn "Anyone holding that key can open shells here. Treat it like a password."
 
 if ($Foreground -and -not $listening) {
     & $node (Join-Path $installDir "server\pty-host.js")
