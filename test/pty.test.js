@@ -256,6 +256,55 @@ test("PTY sessions", { timeout: 180000 }, async (t) => {
     assert.equal(list.some((s) => s.id === sessionId), false);
   });
 
+  await t.test("the tab stops reporting an agent once the agent exits", async (tt) => {
+    // The bug: /exit left the tab green. The flag that says "an agent is running
+    // here" was set when the command was typed and then never cleared, so the
+    // tab kept claiming Claude was there - and a pasted newline kept going out
+    // as ESC CR to a plain shell.
+    //
+    // A command that merely *mentions* an agent by name is detected the same way
+    // a real one is, which is what makes this testable without installing any
+    // agent: it holds the terminal for a few seconds, then gives the prompt back.
+    const win = process.platform === "win32";
+    const line = win ? '& { Start-Sleep -Seconds 4 } # claude' : "sleep 4 # claude";
+    const r = await stack.api("POST", "/api/sessions", { shell: CWD_SHELL, cwd: stack.workDir });
+    if (r.status !== 201) {
+      tt.skip(`${CWD_SHELL} unavailable: ${JSON.stringify(r.body)}`);
+      return;
+    }
+    const id = r.body.session.id;
+    const agentNow = async () => {
+      const list = await stack.api("GET", "/api/sessions");
+      const s = (list.body.sessions || []).find((x) => x.id === id);
+      return s ? s.agent : undefined;
+    };
+    const until = async (want, ms, label) => {
+      const deadline = Date.now() + ms;
+      let last;
+      while (Date.now() < deadline) {
+        last = await agentNow();
+        if (want(last)) return last;
+        await wait(250);
+      }
+      throw new Error(`Timed out waiting for ${label}; agent was ${JSON.stringify(last)}`);
+    };
+    const c = client(stack.wsUrl());
+    await c.open();
+    await c.until((m) => m.type === "ready");
+    c.send({ type: "attach", sessionId: id });
+    await c.until((m) => m.type === "history" && m.sessionId === id, 10000, "history");
+    await wait(2500); // the first prompt, which must not clear anything yet
+    try {
+      c.send({ type: "input", sessionId: id, data: `${line}\r` });
+      await until((a) => a === "claude", 8000, "the tab to report the agent");
+      // The prompt coming back is the only signal an exit gives us.
+      await until((a) => !a, 20000, "the tab to stop reporting the agent");
+    } finally {
+      c.close();
+      await stack.api("DELETE", `/api/sessions/${id}`);
+    }
+  });
+
   await t.test("the shell reports its working directory over OSC 9;9", async (tt) => {
     // The whole chain, on whichever platform this is: the injected startup hook
     // (an -EncodedCommand snippet on Windows, a generated rc file on POSIX), a

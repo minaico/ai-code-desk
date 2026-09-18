@@ -176,9 +176,9 @@ function info(s) {
     // The terminal's identity across reopens, so a saved workspace can find
     // this session again after the machine that ran it has been restarted.
     lineage: s.lineage || s.id,
-    // The agent running now, or the last one that ran here - a terminal where
-    // Claude has worked keeps saying so after Claude exits, which is what the
-    // marker on the tab is reporting.
+    // The agent running here *now*, cleared when the shell prompt comes back
+    // (noteShellPrompt) so a terminal someone has left goes back to looking like
+    // the plain shell it is again. What once ran here is in the history record.
     agent: s.agentLogger ? s.agentLogger.agent.kind : s.agent || null,
     agentLogFile: s.agentLogger ? s.agentLogger.file : null,
     bufferBytes: s.bufferBytes,
@@ -222,17 +222,54 @@ function pushBuffer(s, chunk) {
 const OSC_CWD = /\u001b\]9;9;([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
 const PROMPT_CWD = /(?:^|\n)(?:PS\s+)?([A-Za-z]:\\[^\r\n>]{0,240})>/g;
 
+/**
+ * The shell prompt has run again, so whatever was in front of it is gone: an
+ * agent running in this terminal has exited.
+ *
+ * The tab colour and the newline encoding both read this flag, so leaving it set
+ * after `/exit` left the tab claiming Claude was there and made a pasted newline
+ * go out as ESC CR to a plain shell.
+ *
+ * Only our own OSC 9;9 reaches here. The prompt-shaped regex used as a fallback
+ * on shells that do not emit it would also match a TUI drawing something that
+ * looks like a prompt, and would clear the flag mid-session.
+ */
+function noteShellPrompt(s) {
+  if (!s.agentLogger && !s.agent) return;
+  if (s.agentLogger) {
+    s.agentLogger.close("agent exited: the shell prompt came back");
+    s.agentLogger = null;
+  }
+  s.agent = null;
+  log.info("agent_ended", { sessionId: s.id });
+  announce();
+}
+
 function trackCwd(s, chunk) {
   const text = s.cwdTail + chunk;
   let found = "";
+  let promptRan = false;
+  let consumed = 0;
   let m;
   OSC_CWD.lastIndex = 0;
-  while ((m = OSC_CWD.exec(text))) found = m[1];
+  while ((m = OSC_CWD.exec(text))) {
+    found = m[1];
+    promptRan = true;
+    consumed = OSC_CWD.lastIndex;
+  }
   if (!found && !s.reportsCwd) {
     PROMPT_CWD.lastIndex = 0;
-    while ((m = PROMPT_CWD.exec(text))) found = m[1];
+    while ((m = PROMPT_CWD.exec(text))) {
+      found = m[1];
+      consumed = PROMPT_CWD.lastIndex;
+    }
   }
-  s.cwdTail = text.slice(-512);
+  // Carry forward only what came *after* the last sequence read. Keeping a flat
+  // 512 characters meant one prompt could be read again in the next chunk -
+  // harmless for the cwd, but it would clear the agent flag that the command
+  // typed at that very prompt had just set.
+  s.cwdTail = text.slice(Math.max(consumed, text.length - 512));
+  if (promptRan) noteShellPrompt(s);
   if (!found) return;
   const next = found.replace(/^["']|["']$/g, "").trim();
   if (!next || next === s.cwd) return;
@@ -302,11 +339,14 @@ function spawnPty(s) {
     announce();
   });
 
-  // Type the launcher command into the real PTY, exactly like a human would.
+  // Type the launcher command into the real PTY, exactly like a human would -
+  // including through the same input watcher, so a launched agent is recognised
+  // at the same moment a hand-typed one is, and not before its first prompt.
   if (s.autoRun) {
     setTimeout(() => {
       if (s.pty && s.status === "running") {
         try {
+          noteInputForAgent(s, s.autoRun + "\r");
           s.pty.write(s.autoRun + "\r");
         } catch {}
       }
@@ -408,7 +448,8 @@ function createSession(opts = {}) {
   }
   const entry = history.record(s);
   s.lineage = entry.lineage;
-  if (s.autoRun) startAgentLogIfNeeded(s, s.autoRun);
+  // A launcher's command is detected when it is typed (below), not here: the
+  // first prompt arrives before it, and that prompt now means "nothing running".
   log.info("session_create", { sessionId: s.id, shell, cwd: s.cwd, pid: s.pid, autoRun: !!s.autoRun });
   announce();
   return s;
@@ -425,6 +466,8 @@ function restartSession(s) {
     s.agentLogger.close("restarted");
     s.agentLogger = null;
   }
+  // A fresh process is running nothing yet, whatever the old one was running.
+  s.agent = null;
   s.buffer = [];
   s.bufferBytes = 0;
   s.cwdTail = "";
