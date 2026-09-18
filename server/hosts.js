@@ -139,6 +139,9 @@ function ensureSelf(stored) {
   self.machineId = machineId();
   self.key = hostKey();
   self.port = config.ptyHostPort;
+  // Carried into the export so the machines we are added to know this one's
+  // channel is encrypted, the way AIHubManager's join code carries its flag.
+  self.tls = config.ptyTls;
   if (pinnedAddress()) self.address = pinnedAddress();
   if (!self.address) self.address = guessLanAddress();
   return index;
@@ -181,6 +184,9 @@ class HostRegistry extends EventEmitter {
                 port: entry.port,
                 key: entry.key,
                 machineId: entry.machineId,
+                // Absent means an entry written before the channel could be
+                // encrypted, so that machine is assumed to still speak plaintext.
+                tls: entry.tls === true,
                 local: false,
               })
         );
@@ -316,7 +322,7 @@ class HostRegistry extends EventEmitter {
     return [...this.clients.values()].map((c) => c.status());
   }
 
-  add({ name, address, port, key }) {
+  add({ name, address, port, key, tls }) {
     if (this.clients.size >= MAX_HOSTS) throw new HostError(`At most ${MAX_HOSTS} machines`);
     const addr = validAddress(address);
     const p = Number(port) || config.ptyHostPort;
@@ -331,7 +337,18 @@ class HostRegistry extends EventEmitter {
     }
 
     const id = crypto.randomBytes(5).toString("hex");
-    const entry = { id, name: cleanName(name) || addr, address: addr, port: p, key: secret, machineId: "" };
+    // Encrypted unless the caller says otherwise: a machine being added now is
+    // expected to run this version, and the fix for the other case is one
+    // command (`machines.js tls <id> off`) with a message that names it.
+    const entry = {
+      id,
+      name: cleanName(name) || addr,
+      address: addr,
+      port: p,
+      key: secret,
+      machineId: "",
+      tls: tls !== false,
+    };
     saveStored([...loadStored(), entry]);
     const client = this.attach(new HostClient({ ...entry, local: false }));
     client.start();
@@ -354,6 +371,33 @@ class HostRegistry extends EventEmitter {
     log.info("host_renamed", { hostId: client.id, name: clean });
     // Session cards and tabs carry the machine name, so they have to be redrawn.
     this.emit("sessions", this.allSessions());
+    return client.status();
+  }
+
+  /**
+   * Turn the encrypted channel to one machine on or off, and reconnect.
+   *
+   * This exists for the days a group spans two versions of this code: a machine
+   * still running an older PTY host only speaks plaintext, and until it is
+   * upgraded the link to it has to be told so. Turning it off is a real
+   * downgrade, so it is logged as one.
+   */
+  setTls(hostId, on) {
+    const client = this.client(hostId);
+    if (client.local) throw new HostError("This machine's own channel follows PTY_HOST_TLS, not the registry");
+    const want = !!on;
+    if (client.tls === want) return client.status();
+
+    client.tls = want;
+    saveStored(loadStored().map((e) => (e.id === client.id ? { ...e, tls: want } : e)));
+    if (!want) log.warn("host_tls_disabled", { hostId: client.id, name: client.name });
+    else log.info("host_tls_enabled", { hostId: client.id, name: client.name });
+
+    // The setting only takes effect on a new socket.
+    client.stop();
+    client.stopped = false;
+    client.retryMs = 300;
+    client.start();
     return client.status();
   }
 

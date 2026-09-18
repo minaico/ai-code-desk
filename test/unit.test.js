@@ -446,6 +446,152 @@ test("the UI markup has no Windows paths eaten by template-literal escapes", () 
   assert.deepEqual(hits, [], "a backslash before a letter is an escape, not a path separator");
 });
 
+/* ------------------------------------------------------------------ *
+ * The encrypted machine-to-machine channel (server/tlspsk.js)
+ * ------------------------------------------------------------------ */
+const tls = require("tls");
+const net = require("net");
+const tlspsk = require("../server/tlspsk");
+
+/** A PSK server that echoes one line, so a test can prove it got through. */
+function pskServer(key) {
+  const server = tls.createServer(tlspsk.serverOptions(key), (sock) => {
+    sock.setEncoding("utf8");
+    sock.on("data", (d) => sock.write(`echo:${d}`));
+  });
+  const errors = [];
+  server.on("tlsClientError", (err) => errors.push(err.message));
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, errors }));
+  });
+}
+
+/** Resolves to the reply, or rejects with whatever stopped the handshake. */
+function pskSay(port, key, line) {
+  return new Promise((resolve, reject) => {
+    const sock = tls.connect({ port, host: "127.0.0.1", ...tlspsk.clientOptions(key) });
+    sock.setEncoding("utf8");
+    sock.setTimeout(4000, () => reject(new Error("timeout")));
+    sock.on("secureConnect", () => sock.write(line));
+    sock.on("data", (d) => {
+      resolve(d);
+      sock.destroy();
+    });
+    sock.on("error", reject);
+  });
+}
+
+const KEY_A = "a".repeat(64);
+const KEY_B = "b".repeat(64);
+
+test("the machine key alone encrypts and authenticates the channel", async () => {
+  const { server, port } = await pskServer(KEY_A);
+  try {
+    // No certificate exists anywhere; the shared key is the whole credential.
+    assert.equal(await pskSay(port, KEY_A, "hello"), "echo:hello");
+  } finally {
+    server.close();
+  }
+});
+
+test("a wrong key fails the handshake instead of reaching the protocol", async () => {
+  const { server, port, errors } = await pskServer(KEY_A);
+  try {
+    await assert.rejects(() => pskSay(port, KEY_B, '{"type":"hello"}'));
+    // The point of doing this in TLS rather than in the hello: the bad peer
+    // never got to send a message at all.
+    assert.ok(errors.length >= 1, "the host should have logged a failed handshake");
+  } finally {
+    server.close();
+  }
+});
+
+test("a plaintext client cannot talk to the encrypted channel", async () => {
+  const { server, port } = await pskServer(KEY_A);
+  try {
+    const got = await new Promise((resolve) => {
+      const sock = net.createConnection({ port, host: "127.0.0.1" });
+      sock.setTimeout(3000, () => resolve("timeout"));
+      sock.on("connect", () => sock.write('{"type":"hello","key":"' + KEY_A + '"}\n'));
+      // Even holding the right key, an old plaintext peer gets nowhere: its
+      // JSON is not a ClientHello. This is why the registry carries a per-machine
+      // flag instead of the host guessing.
+      sock.on("data", (d) => resolve(`replied:${d}`));
+      sock.on("error", () => resolve("error"));
+      sock.on("close", () => resolve("closed"));
+    });
+    assert.ok(got !== "replied", `plaintext must not be answered, got ${got}`);
+    assert.ok(!String(got).startsWith("replied:{"), `no protocol reply to plaintext, got ${got}`);
+  } finally {
+    server.close();
+  }
+});
+
+test("keys are used as bytes when hex, and hashed when not", () => {
+  // 64 hex characters are the 32 bytes they stand for...
+  assert.deepEqual(tlspsk.keyBuf(KEY_A), Buffer.from(KEY_A, "hex"));
+  assert.equal(tlspsk.keyBuf(KEY_A).length, 32);
+  // ...but this field has always held whatever the owner pasted, and both ends
+  // run this same function, so a non-hex key still yields one shared secret.
+  const odd = "not-hex-but-long-enough-to-be-a-key!!";
+  assert.equal(tlspsk.keyBuf(odd).length, 32);
+  assert.deepEqual(tlspsk.keyBuf(odd), tlspsk.keyBuf(odd));
+  assert.notDeepEqual(tlspsk.keyBuf(odd), tlspsk.keyBuf(odd + "x"));
+  assert.throws(() => tlspsk.keyBuf("short"), /too short/);
+});
+
+test("the channel is pinned to TLS 1.2 PSK suites on both ends", () => {
+  for (const opts of [tlspsk.serverOptions(KEY_A), tlspsk.clientOptions(KEY_A)]) {
+    assert.equal(opts.minVersion, "TLSv1.2");
+    assert.equal(opts.maxVersion, "TLSv1.2");
+    assert.match(opts.ciphers, /^PSK-AES256-GCM-SHA384:PSK-AES128-GCM-SHA256$/);
+    assert.ok(!opts.cert && !opts.key && !opts.ca, "no certificates are involved");
+  }
+});
+
+test("the direct-HTTPS listener refuses TLS below 1.2, and HSTS stays opt-in", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "server/server.js"), "utf8");
+  const options = src.slice(src.indexOf("https.createServer"), src.indexOf("log.info(\"tls_enabled\""));
+  assert.match(options, /minVersion:\s*"TLSv1\.2"/);
+  // A shared-domain quick tunnel is the common way in, so HSTS must be asked
+  // for and must never claim subdomains of a name we do not own.
+  assert.match(src, /config\.hstsSeconds > 0 && isSecure\(req\)/);
+  const header = src.match(/"Strict-Transport-Security",\s*`[^`]*`/)[0];
+  assert.ok(!header.includes("includeSubDomains"), `HSTS must not claim subdomains: ${header}`);
+  const { execFileSync } = require("child_process");
+  const read = (days) => {
+    const env = { ...process.env, WEB_TERMINAL_LOG_CONSOLE: "0" };
+    if (days === undefined) delete env.WEB_TERMINAL_HSTS_DAYS;
+    else env.WEB_TERMINAL_HSTS_DAYS = days;
+    return Number(execFileSync(process.execPath,
+      ["-e", 'process.stdout.write(String(require("./server/config").config.hstsSeconds))'],
+      { cwd: path.join(__dirname, ".."), env, encoding: "utf8" }));
+  };
+  assert.equal(read(undefined), 0, "default: no HSTS");
+  assert.equal(read("30"), 30 * 86400);
+});
+
+test("there is no session cap unless one is asked for", () => {
+  const { execFileSync } = require("child_process");
+  const read = (value) => {
+    const env = { ...process.env, WEB_TERMINAL_LOG_CONSOLE: "0" };
+    if (value === undefined) delete env.WEB_TERMINAL_MAX_SESSIONS;
+    else env.WEB_TERMINAL_MAX_SESSIONS = value;
+    return Number(execFileSync(process.execPath, ["-e", 'process.stdout.write(String(require("./server/config").config.maxSessions))'],
+      { cwd: path.join(__dirname, ".."), env, encoding: "utf8" }));
+  };
+  // The 24 that used to be the default stopped one person opening their 25th
+  // project, and nothing else, ever.
+  assert.equal(read(undefined), 0, "default: unlimited");
+  assert.equal(read("0"), 0);
+  assert.equal(read("40"), 40, "a cap is still available to whoever wants one");
+  assert.equal(read("-3"), 0);
+  assert.equal(read("abc"), 0);
+  // And the host only enforces a cap that is positive.
+  const host = fs.readFileSync(path.join(__dirname, "..", "server/pty-host.js"), "utf8");
+  assert.match(host, /if \(config\.maxSessions > 0\) \{[\s\S]*?Session limit reached/);
+});
+
 test("a ?view window watches without claiming any terminal's size", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "src/main.js"), "utf8");
   // Opened at another size (a second monitor, a demo), a desktop window would

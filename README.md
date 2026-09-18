@@ -203,8 +203,9 @@ On each other machine, start only the PTY host; it prints the machine's addresse
 
 Back in the UI: **Machines → Add a machine** — a name, the address, port `8777`, the key. From now on the
 *New terminal* dialog has a machine picker, and every keystroke, resize and restart goes to the machine that
-owns the terminal. The link between machines is authenticated but **not encrypted**: keep it on a LAN or a
-VPN (WireGuard, Tailscale, ZeroTier …).
+owns the terminal. The link between machines is **encrypted with TLS-PSK** keyed by that machine's own
+`.data/host.key` — there is no certificate to create or trust, and a wrong key fails the TLS handshake. Keep
+it on a LAN or a VPN anyway (WireGuard, Tailscale, ZeroTier …).
 
 ### 4. Reach it from your phone with a temporary address
 
@@ -323,14 +324,16 @@ Environment variables (the full list is in the [detailed guide](docs/huong-dan-c
 |---|---|---|
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | web server |
 | `PTY_HOST_PORT` / `PTY_HOST_BIND` | `8777` / `127.0.0.1` | PTY host; bind `0.0.0.0` so other machines can reach it |
+| `PTY_HOST_TLS` | `1` | encrypt the machine-to-machine channel with TLS-PSK; `0` only to reach an older peer |
 | `WEB_TERMINAL_PASSWORD_HASH` | — | scrypt hash from `node scripts/hash-password.js` (recommended) |
 | `WEB_TERMINAL_PASSWORD` | `123123` | plain password; an empty string disables authentication (localhost only!) |
 | `WEB_TERMINAL_ROOTS` | your profile folder | folders the file explorer may use, separated by `;` (`:` on Linux) |
 | `WEB_TERMINAL_DATA` | `./.data` | keys, history, logs |
 | `WEB_TERMINAL_SCROLLBACK_KB` | `512` | scrollback kept per terminal |
-| `WEB_TERMINAL_MAX_SESSIONS` | `24` | concurrent terminals per machine |
+| `WEB_TERMINAL_MAX_SESSIONS` | `0` (no limit) | cap on concurrent terminals per machine, if you want one |
 | `WEB_TERMINAL_TOKEN_HOURS` | `168` | how long a sign-in lasts |
-| `WEB_TERMINAL_TLS_CERT` / `_KEY` | — | serve HTTPS directly |
+| `WEB_TERMINAL_TLS_CERT` / `_KEY` | — | serve HTTPS directly (TLS 1.2 minimum) |
+| `WEB_TERMINAL_HSTS_DAYS` | `0` (off) | Strict-Transport-Security, once the app is on a name you own |
 | `WEB_TERMINAL_ADDRESS` | detected | the address other machines should use for this one |
 | `CLAUDE_BIN` | auto-detected | path to `claude` |
 
@@ -347,9 +350,12 @@ account it runs under. It is built to make that the *only* thing a visitor can g
 - **Files:** the explorer is confined to `WEB_TERMINAL_ROOTS`, checked after resolving symlinks and
   junctions; UNC paths and reserved names are refused; uploads are capped by declared *and* received size.
 - **Git:** read-only, run with `execFile` and argument arrays — no shell.
+- **Between machines:** the PTY channel is TLS 1.2 with PSK cipher suites, keyed by that machine's own
+  `.data/host.key` — **no certificate to create or trust**, because the credential the link already used is
+  the encryption key. A wrong key now fails the TLS handshake instead of reaching the protocol, and a man in
+  the middle cannot impersonate a PTY host without it. Keep it on a LAN or VPN anyway.
 - **Logs** never contain passwords, tokens, or terminal input/output.
-- **Not covered:** the machine-to-machine link is not encrypted (LAN/VPN only), and voice dictation sends
-  audio to Apple's or Google's speech service through the browser.
+- **Not covered:** voice dictation sends audio to Apple's or Google's speech service through the browser.
 
 Before exposing it: change the default password, run it under a dedicated least-privilege account, never set
 `WEB_TERMINAL_ROOTS` to a whole drive, and put HTTPS plus Cloudflare Access (or a VPN) in front.
@@ -386,7 +392,8 @@ docs/     detailed guide (Vietnamese), screenshots, demo script
 
 - **A reboot ends every terminal.** ConPTY has no process checkpointing. Workspace restore reopens the tabs in
   the same folders; most agents can pick the conversation back up (`claude --continue`, `codex resume`).
-- **The machine-to-machine link is not encrypted** (see above).
+- **A machine running an older version than this one** only speaks the plaintext protocol; mark it with
+  `node scripts/machines.js tls <machine> off` until it is upgraded (see [Security](#security)).
 - **Windows PowerShell 5.1 + emoji:** PSReadLine throws `EncoderFallbackException` when you type an emoji (the
   command still runs). PowerShell 7 (`pwsh`) does not have this problem.
 - **`Ctrl+Tab`** is reserved by Chrome and Edge; use `Alt+1..9`, `Ctrl+PageUp/PageDown` or the on-screen key.

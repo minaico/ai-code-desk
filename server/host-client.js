@@ -10,6 +10,7 @@
  * Events (output/exit/sessions/cwd) are emitted for the WebSocket layer.
  */
 const net = require("net");
+const tls = require("tls");
 const { EventEmitter } = require("events");
 const { spawn } = require("child_process");
 const path = require("path");
@@ -18,9 +19,27 @@ const crypto = require("crypto");
 const { config, hostKey } = require("./config");
 const { createLogger } = require("./logger");
 const { plainAddress } = require("./machine");
+const tlspsk = require("./tlspsk");
 
 const log = createLogger("web", config.dataDir);
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * A handshake that failed says nothing useful by itself ("wrong version
+ * number"), and the two causes need opposite fixes: the same key is missing, or
+ * the machine at the far end is old enough that it only speaks plaintext.
+ */
+const isHandshakeError = (err) =>
+  /ssl|tls|handshake|decrypt|psk|wrong version/i.test(String((err && (err.code || err.message)) || ""));
+
+function handshakeHint(client, err) {
+  const how = client.local ? "" : ` node scripts/machines.js tls ${client.id} off`;
+  return (
+    `${err.message} - the encrypted link to "${client.name}" did not come up. ` +
+    `Either the key there differs from the one saved here, or that machine still runs a ` +
+    `version without TLS; in that case upgrade it, or accept plaintext with${how || " PTY_HOST_TLS=0"}.`
+  );
+}
 
 class HostClient extends EventEmitter {
   /**
@@ -37,6 +56,13 @@ class HostClient extends EventEmitter {
     this.port = Number(opts.port) || config.ptyHostPort;
     this.local = opts.local !== false;
     this.key = opts.key || (this.local ? hostKey() : "");
+    /**
+     * Encrypt this link with TLS-PSK (server/tlspsk.js). Our own machine's host
+     * runs this same code, so it follows this machine's setting; a remote
+     * machine is whatever its registry entry says, because it may still be
+     * running a version that only speaks plaintext.
+     */
+    this.tls = this.local ? config.ptyTls : opts.tls !== false;
     this.publicAddress = opts.publicAddress || "";
     /** Reported by the PTY host itself; empty for one older than the field. */
     this.machineId = opts.machineId || "";
@@ -98,13 +124,17 @@ class HostClient extends EventEmitter {
 
   connect() {
     if (this.stopped || this.socket) return;
-    const sock = net.createConnection({ port: this.port, host: this.address });
+    // A tls.Socket is not usable until "secureConnect"; sending the hello on
+    // "connect" would put the key on the wire before the handshake finished.
+    const sock = this.tls
+      ? tls.connect({ port: this.port, host: this.address, ...tlspsk.clientOptions(this.key) })
+      : net.createConnection({ port: this.port, host: this.address });
     this.socket = sock;
     sock.setEncoding("utf8");
     sock.setNoDelay(true);
     sock.setTimeout(20_000);
 
-    sock.on("connect", () => {
+    sock.on(this.tls ? "secureConnect" : "connect", () => {
       this.retryMs = 300;
       this.buffer = "";
       this.localAddress = plainAddress(sock.localAddress);
@@ -160,7 +190,7 @@ class HostClient extends EventEmitter {
 
     sock.on("close", drop);
     sock.on("error", (err) => {
-      this.lastError = err.message;
+      this.lastError = this.tls && isHandshakeError(err) ? handshakeHint(this, err) : err.message;
     });
   }
 
@@ -265,6 +295,8 @@ class HostClient extends EventEmitter {
       hostname: this.hostname,
       platform: this.platform,
       connected: this.connected,
+      /** Whether the terminal traffic to this machine is encrypted. */
+      tls: this.tls,
       hostPid: this.hostPid,
       hostStartedAt: this.hostStartedAt,
       sessionCount: this.sessions.length,

@@ -73,10 +73,21 @@ function serverRunningHere() {
 function printGroup(stored, selfId) {
   stored.forEach((e, i) => {
     const mark = e.id === selfId ? "*" : " ";
-    console.log(`${mark} ${i + 1}. ${e.name}  [${e.id}]  ${e.address || "?"}:${e.port}${e.key ? "" : "  (thiếu key)"}`);
+    // How the terminal traffic to that machine travels. For this machine the
+    // answer is PTY_HOST_TLS, not the file.
+    const link = e.id === selfId ? (config.ptyTls ? "mã hoá" : "THÔ") : e.tls === true ? "mã hoá" : "THÔ";
+    console.log(
+      `${mark} ${i + 1}. ${e.name}  [${e.id}]  ${e.address || "?"}:${e.port}  ${link}` +
+        `${e.key ? "" : "  (thiếu key)"}`
+    );
   });
   console.log("");
   console.log("* = máy này. Hình trên tab theo thứ tự trên: 1 tròn, 2 tam giác, 3 vuông...");
+  if (stored.some((e) => e.id !== selfId && e.tls !== true)) {
+    console.log("");
+    console.log("THÔ = kênh tới máy đó chưa mã hoá: mọi phím bấm và mọi dòng output đi qua mạng đọc được.");
+    console.log("Sau khi máy đó đã chạy bản này:  node scripts/machines.js tls <id|số> on");
+  }
 }
 
 function list() {
@@ -169,6 +180,40 @@ async function importGroup(source, force) {
   console.log(`cổng ${config.ptyHostPort} ở firewall, để máy chính mới tới được chúng.`);
 }
 
+/**
+ * Flip the encrypted channel to one machine, by id, name or list number.
+ *
+ * Written straight to hosts.json rather than through the running server,
+ * because the reason to reach for this is usually that the link is down.
+ */
+function setTls(which, onOff) {
+  const on = String(onOff || "").toLowerCase();
+  if (on !== "on" && on !== "off") {
+    throw new Error("Dùng: node scripts/machines.js tls <id|tên|số> on|off");
+  }
+  const { stored, self } = currentGroup();
+  const wanted = String(which || "").trim().toLowerCase();
+  if (!wanted) throw new Error("Cần biết máy nào: node scripts/machines.js tls <id|tên|số> on|off");
+
+  const index = stored.findIndex(
+    (e, i) => e.id.toLowerCase() === wanted || e.name.toLowerCase() === wanted || String(i + 1) === wanted
+  );
+  if (index < 0) throw new Error(`Không có máy nào khớp "${which}" - xem: node scripts/machines.js list`);
+  const entry = stored[index];
+  if (entry.id === self.id) {
+    throw new Error("Kênh của chính máy này theo biến PTY_HOST_TLS, không theo file. Đặt PTY_HOST_TLS=0 rồi khởi động lại PTY host.");
+  }
+
+  stored[index] = { ...entry, tls: on === "on" };
+  saveStored(stored);
+  console.log(`${entry.name} [${entry.id}]: kênh ${on === "on" ? "mã hoá (TLS-PSK)" : "THÔ - không mã hoá"}.`);
+  if (on === "off") {
+    console.log("Cảnh báo: mọi phím bấm và mọi dòng output tới máy đó sẽ đi qua mạng đọc được.");
+    console.log("Chỉ dùng khi máy đó còn chạy bản cũ; nâng cấp nó rồi bật lại.");
+  }
+  console.log("Khởi động lại web server để áp dụng (PTY host và các terminal không bị ảnh hưởng).");
+}
+
 async function main() {
   const [cmd, arg, ...rest] = process.argv.slice(2);
   const force = [arg, ...rest].includes("--force");
@@ -180,8 +225,10 @@ async function main() {
       return exportGroup(value);
     case "import":
       return importGroup(value, force);
+    case "tls":
+      return setTls(value, rest.find((x) => x !== "--force"));
     default:
-      console.log("node scripts/machines.js [list | export [file] | import <file> [--force]]");
+      console.log("node scripts/machines.js [list | export [file] | import <file> [--force] | tls <máy> on|off]");
       process.exitCode = 1;
   }
 }

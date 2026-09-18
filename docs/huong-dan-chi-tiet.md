@@ -583,8 +583,16 @@ mọi thao tác (gõ, resize, kill, restart, lịch sử) được định tuy�
 
 Lưu ý:
 
-- Kết nối giữa hai máy **có xác thực nhưng không mã hoá**. Chỉ dùng trong LAN
+- Kết nối giữa hai máy được **mã hoá bằng TLS-PSK** (TLS 1.2, bộ mã PSK), khoá
+  lấy từ chính `.data/host.key` của máy đó. Không có chứng chỉ nào phải tạo hay
+  phải tin: khoá mà liên kết vốn đã dùng để xác thực giờ cũng là khoá mã hoá.
+  Key sai rớt ngay ở bước bắt tay, chưa vào tới giao thức. Vẫn nên giữ trong LAN
   hoặc VPN; đừng định tuyến ra Internet.
+- **Máy chạy bản cũ** (trước khi có mã hoá) chỉ nói được giao thức thô. Đánh dấu
+  nó bằng `node scripts\machines.js tls <id|tên|số> off`, nâng cấp xong thì
+  `... on`. Muốn tắt mã hoá cho chính máy này thì đặt `PTY_HOST_TLS=0` rồi khởi
+  động lại PTY host — cả hai cách đều đưa terminal trở lại dạng đọc được trên
+  đường truyền, nên chỉ dùng tạm.
 - Key nằm ở `.data/host.key`, ai có key là mở được terminal trên máy đó — coi nó
   như mật khẩu.
 - Bộ chọn thư mục và File Explorer chỉ làm việc trên máy chạy web server. Với máy
@@ -819,6 +827,8 @@ Nhận về: `ready`, `sessions`, `history`, `output`, `exit`, `cwd`, `reset`,
 | `HOST` | `0.0.0.0` | địa chỉ bind |
 | `PTY_HOST_PORT` | `8777` | cổng PTY host |
 | `PTY_HOST_BIND` | `127.0.0.1` | đặt `0.0.0.0` để máy khác trong LAN điều khiển được (`resume.ps1` tự đặt khi nhóm có máy khác) |
+| `PTY_HOST_TLS` | `1` | mã hoá kênh giữa các máy bằng TLS-PSK (`server/tlspsk.js`); `0` = giao thức thô, chỉ để nói với máy chạy bản cũ |
+| `WEB_TERMINAL_HSTS_DAYS` | `0` | số ngày Strict-Transport-Security; để `0` khi còn vào bằng quick tunnel (tên miền dùng chung) |
 | `WEB_TERMINAL_ADDRESS` | tự tìm | địa chỉ các máy khác dùng để tới máy này, khi tự tìm sai |
 | — | — | máy từ xa **chỉ** cần PTY host (8777), không cần web server |
 | `WEB_TERMINAL_PASSWORD_HASH` | — | hash scrypt (khuyến nghị) |
@@ -828,7 +838,7 @@ Nhận về: `ready`, `sessions`, `history`, `output`, `exit`, `cwd`, `reset`,
 | `WEB_TERMINAL_DATA` | `.\.data` | secret key + log |
 | `WEB_TERMINAL_MAX_UPLOAD_MB` | `200` | giới hạn upload |
 | `WEB_TERMINAL_SCROLLBACK_KB` | `512` | scrollback giữ mỗi session |
-| `WEB_TERMINAL_MAX_SESSIONS` | `24` | số session chạy đồng thời |
+| `WEB_TERMINAL_MAX_SESSIONS` | `0` (không giới hạn) | trần số session chạy đồng thời, nếu muốn đặt |
 | `WEB_TERMINAL_EXITED_KEEP_MIN` | `30` | giữ session đã thoát bao lâu |
 | `WEB_TERMINAL_TOKEN_HOURS` | `168` | hạn token đăng nhập |
 | `WEB_TERMINAL_TLS_CERT` / `_KEY` | — | bật HTTPS trực tiếp |
@@ -889,7 +899,7 @@ client, bộ nhớ, roots, và 60 dòng log gần nhất.
 
 Nhật ký agent ghi vào thư mục làm việc của session (ngoài roots nếu session ở
 ngoài roots) — đó là yêu cầu của tính năng; nó do PTY host ghi, không đi qua
-file API. Liên kết giữa các máy không mã hoá, xem [Nhiều máy](#nhiều-máy).
+file API. Liên kết giữa các máy mã hoá bằng TLS-PSK, xem [Nhiều máy](#nhiều-máy).
 
 Chặn mặc định: `%SystemRoot%` (C:\Windows), `$Recycle.Bin`,
 `System Volume Information`, `Recovery`, `Boot`, `PerfLogs`, `Config.Msi`,
@@ -1017,7 +1027,9 @@ loại `.git` ra khỏi phạm vi đồng bộ là cách chặn tận gốc.
   tiếng Việt lẫn emoji đúng — dùng `pwsh` nếu bạn cần emoji.
 - **Nhật ký agent không phải transcript giao thức** — xem giải thích ở mục
   [Nhật ký hội thoại với agent](#nhật-ký-hội-thoại-với-agent).
-- **Liên kết nhiều máy không mã hoá.** LAN/VPN only.
+- **Máy chạy bản cũ chỉ nói giao thức thô.** Kênh giữa các máy giờ mã hoá TLS-PSK;
+  máy chưa nâng cấp phải đánh dấu `machines.js tls <máy> off` và khi đó kênh tới
+  nó đọc được trên đường truyền. Vẫn nên ở trong LAN/VPN.
 - **Nhận dạng giọng nói gửi âm thanh tới Apple/Google**, không xử lý cục bộ.
 - **Split view** chia đôi ngang/dọc theo tỉ lệ cố định 50/50; chưa kéo thả được
   đường chia. Màn hình cao dưới 520px sẽ từ chối split.

@@ -10,6 +10,7 @@
  * Wire format: newline-delimited JSON, both directions.
  */
 const net = require("net");
+const tls = require("tls");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -17,6 +18,7 @@ const crypto = require("crypto");
 const pty = require("node-pty");
 
 const { config, ensureDataDir, hostKey } = require("./config");
+const tlspsk = require("./tlspsk");
 const { createLogger } = require("./logger");
 const profiles = require("./profiles");
 const { History } = require("./history");
@@ -357,8 +359,11 @@ function noteInputForAgent(s, data) {
 }
 
 function createSession(opts = {}) {
-  const running = [...sessions.values()].filter((s) => s.status === "running").length;
-  if (running >= config.maxSessions) throw new Error(`Session limit reached (${config.maxSessions})`);
+  // Only when a limit was asked for (WEB_TERMINAL_MAX_SESSIONS > 0).
+  if (config.maxSessions > 0) {
+    const running = [...sessions.values()].filter((s) => s.status === "running").length;
+    if (running >= config.maxSessions) throw new Error(`Session limit reached (${config.maxSessions})`);
+  }
 
   const shell = String(opts.shell || "powershell");
   if (!profiles.PROFILES[shell]) throw new Error(`Unknown shell profile: ${shell}`);
@@ -736,8 +741,13 @@ function handle(sock, msg) {
 
 /* ------------------------------------------------------------------ *
  * TCP server
+ *
+ * TLS-PSK by default (server/tlspsk.js): the key in .data/host.key both
+ * encrypts the channel and authenticates it, so a wrong key now fails the
+ * handshake before any message is parsed. The plaintext path remains only for
+ * talking to an older peer, and says so in the log.
  * ------------------------------------------------------------------ */
-const server = net.createServer((sock) => {
+const onConnection = (sock) => {
   sock.authed = false;
   sock.subs = new Set();
   sock.setEncoding("utf8");
@@ -779,6 +789,19 @@ const server = net.createServer((sock) => {
     log.warn("client_socket_error", { error: err });
     clients.delete(sock);
   });
+};
+
+const server = config.ptyTls
+  ? tls.createServer(tlspsk.serverOptions(SECRET), onConnection)
+  : net.createServer(onConnection);
+
+// A failed handshake never reaches onConnection, so this is the only place a
+// wrong key or an old plaintext peer shows up.
+server.on("tlsClientError", (err, sock) => {
+  log.warn("tls_handshake_failed", {
+    error: err && err.message,
+    peer: sock && sock.remoteAddress,
+  });
 });
 
 server.on("error", (err) => {
@@ -790,12 +813,22 @@ server.listen(config.ptyHostPort, config.ptyHostBind, () => {
   log.info("host_started", {
     port: config.ptyHostPort,
     bind: config.ptyHostBind,
+    tls: config.ptyTls,
     pid: process.pid,
     node: process.version,
   });
+  if (!config.ptyTls) {
+    console.log("WARNING: PTY_HOST_TLS=0 - this channel is not encrypted. Every keystroke and");
+    console.log("         everything the terminal prints crosses the network readable.");
+  }
   if (config.ptyHostBind !== "127.0.0.1") {
     console.log(`PTY host is reachable from the network on ${config.ptyHostBind}:${config.ptyHostPort}.`);
-    console.log("Only machines holding the key in .data/host.key can connect. Keep this on a trusted LAN or a VPN.");
+    console.log(
+      config.ptyTls
+        ? "The channel is TLS-PSK: only machines holding the key in .data/host.key complete the handshake."
+        : "Only machines holding the key in .data/host.key can connect."
+    );
+    console.log("Keep this on a trusted LAN or a VPN.");
   }
 });
 

@@ -51,15 +51,30 @@ const config = {
   // 127.0.0.1 by default. Set to 0.0.0.0 to let other machines on the LAN
   // drive this PTY host (they still need the shared key from .data/host.key).
   ptyHostBind: process.env.PTY_HOST_BIND || "127.0.0.1",
+  /**
+   * Encrypt the PTY channel with TLS-PSK keyed by .data/host.key (server/tlspsk.js).
+   * On by default. PTY_HOST_TLS=0 serves the old plaintext protocol, which is
+   * only for talking to a machine still running an older version of this code —
+   * it puts every keystroke back on the wire in the clear.
+   */
+  ptyTls: process.env.PTY_HOST_TLS !== "0",
   password: passwordFromEnv,
   passwordHash: process.env.WEB_TERMINAL_PASSWORD_HASH || "",
   roots: parseRoots(process.env.WEB_TERMINAL_ROOTS),
   tokenTtlMs: num(process.env.WEB_TERMINAL_TOKEN_HOURS, 168) * 3600 * 1000,
   maxUploadBytes: num(process.env.WEB_TERMINAL_MAX_UPLOAD_MB, 200) * 1024 * 1024,
   scrollbackBytes: num(process.env.WEB_TERMINAL_SCROLLBACK_KB, 512) * 1024,
-  maxSessions: num(process.env.WEB_TERMINAL_MAX_SESSIONS, 24),
+  /**
+   * How many terminals may run at once on this machine. 0 = no limit, and
+   * that is the default: the cap existed to catch a runaway script, but the
+   * one time it fired was on a person opening their 25th project, and a
+   * limit that only ever stops the owner is not protecting anyone.
+   */
+  maxSessions: Math.max(0, Math.floor(Number(process.env.WEB_TERMINAL_MAX_SESSIONS) || 0)),
   /** How long an exited session stays listed so the UI can offer Restart. */
   exitedKeepMs: num(process.env.WEB_TERMINAL_EXITED_KEEP_MIN, 30) * 60 * 1000,
+  /** Days of Strict-Transport-Security to promise. 0 = send no HSTS header. */
+  hstsSeconds: num(process.env.WEB_TERMINAL_HSTS_DAYS, 0) * 86400,
   tlsCert: process.env.WEB_TERMINAL_TLS_CERT || "",
   tlsKey: process.env.WEB_TERMINAL_TLS_KEY || "",
   claudeBin: process.env.CLAUDE_BIN || "claude",

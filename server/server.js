@@ -70,16 +70,27 @@ if (config.trustProxy) app.set("trust proxy", true);
 /* ------------------------------------------------------------------ *
  * Baseline hardening
  * ------------------------------------------------------------------ */
+const isSecure = (req) =>
+  req.secure || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  /**
+   * HSTS is off by default, and that is deliberate: the usual way in from a
+   * phone is a Cloudflare quick tunnel on a *shared* domain, where a long
+   * max-age is a promise about a hostname someone else may get next. Turn it on
+   * (WEB_TERMINAL_HSTS_DAYS) once the app has a name you own. Never sent over
+   * plain HTTP, where it would be ignored anyway, and never with
+   * includeSubDomains for the same shared-domain reason.
+   */
+  if (config.hstsSeconds > 0 && isSecure(req)) {
+    res.setHeader("Strict-Transport-Security", `max-age=${config.hstsSeconds}`);
+  }
   next();
 });
-
-const isSecure = (req) =>
-  req.secure || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
 
 function setSessionCookie(req, res, token, maxAgeMs) {
   const parts = [
@@ -1001,9 +1012,21 @@ app.use((err, req, res, _next) => {
  * HTTP(S) server
  * ------------------------------------------------------------------ */
 let server;
-if (config.tlsCert && config.tlsKey && fs.existsSync(config.tlsCert) && fs.existsSync(config.tlsKey)) {
-  server = https.createServer({ cert: fs.readFileSync(config.tlsCert), key: fs.readFileSync(config.tlsKey) }, app);
-  log.info("tls_enabled", { cert: config.tlsCert });
+const servesTls = !!(config.tlsCert && config.tlsKey && fs.existsSync(config.tlsCert) && fs.existsSync(config.tlsKey));
+if (servesTls) {
+  server = https.createServer(
+    {
+      cert: fs.readFileSync(config.tlsCert),
+      key: fs.readFileSync(config.tlsKey),
+      // Node still accepts TLS 1.0 and 1.1 by default on some builds. Nothing
+      // that can run this UI needs them, and a shell is not the place to leave
+      // a downgrade available.
+      minVersion: "TLSv1.2",
+      honorCipherOrder: true,
+    },
+    app
+  );
+  log.info("tls_enabled", { cert: config.tlsCert, minVersion: "TLSv1.2" });
 } else {
   server = http.createServer(app);
 }
@@ -1266,7 +1289,10 @@ if (require.main === module) {
       roots: config.roots,
       staticDir,
     });
-    console.log(`Web Terminal listening on http://${config.host === "0.0.0.0" ? "localhost" : config.host}:${config.port}`);
+    console.log(
+      `Web Terminal listening on ${servesTls ? "https" : "http"}://` +
+        `${config.host === "0.0.0.0" ? "localhost" : config.host}:${config.port}`
+    );
     log.info("machines", { count: hosts.list().length });
     if (!config.authRequired) {
       console.log("WARNING: authentication is disabled - anyone who can reach this port gets a shell.");

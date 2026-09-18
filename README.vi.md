@@ -203,7 +203,8 @@ Trên mỗi máy khác, chỉ chạy PTY host; script in ra địa chỉ và key
 
 Quay lại giao diện: **Máy → Thêm máy** — tên, địa chỉ, cổng `8777`, key. Từ đó hộp thoại *Terminal mới* có ô
 chọn máy, và mọi phím gõ, đổi kích thước, khởi động lại đều đi tới đúng máy đang giữ terminal. Liên kết giữa
-các máy có xác thực nhưng **không mã hoá**: chỉ dùng trong LAN hoặc VPN (WireGuard, Tailscale, ZeroTier …).
+các máy được **mã hoá bằng TLS-PSK** lấy khoá từ chính `.data/host.key` của máy đó — không cần chứng chỉ nào.
+Key sai rớt ngay ở bước bắt tay TLS. Dù vậy vẫn nên giữ trong LAN hoặc VPN (WireGuard, Tailscale, ZeroTier …).
 
 ### 4. Vào từ điện thoại bằng một địa chỉ tạm
 
@@ -322,14 +323,16 @@ Biến môi trường (danh sách đầy đủ ở [hướng dẫn chi tiết](d
 |---|---|---|
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | web server |
 | `PTY_HOST_PORT` / `PTY_HOST_BIND` | `8777` / `127.0.0.1` | PTY host; bind `0.0.0.0` để máy khác tới được |
+| `PTY_HOST_TLS` | `1` | mã hoá kênh giữa các máy bằng TLS-PSK; đặt `0` chỉ khi cần nói với máy chạy bản cũ |
 | `WEB_TERMINAL_PASSWORD_HASH` | — | hash scrypt từ `node scripts/hash-password.js` (khuyến nghị) |
 | `WEB_TERMINAL_PASSWORD` | `123123` | mật khẩu thô; chuỗi rỗng là tắt xác thực (chỉ cho localhost!) |
 | `WEB_TERMINAL_ROOTS` | thư mục profile của bạn | thư mục trình quản lý file được dùng, ngăn bằng `;` (`:` trên Linux) |
 | `WEB_TERMINAL_DATA` | `./.data` | key, lịch sử, log |
 | `WEB_TERMINAL_SCROLLBACK_KB` | `512` | scrollback giữ mỗi terminal |
-| `WEB_TERMINAL_MAX_SESSIONS` | `24` | số terminal chạy cùng lúc trên mỗi máy |
+| `WEB_TERMINAL_MAX_SESSIONS` | `0` (không giới hạn) | trần số terminal chạy cùng lúc trên mỗi máy, nếu muốn đặt |
 | `WEB_TERMINAL_TOKEN_HOURS` | `168` | một lần đăng nhập giữ được bao lâu |
-| `WEB_TERMINAL_TLS_CERT` / `_KEY` | — | phục vụ HTTPS trực tiếp |
+| `WEB_TERMINAL_TLS_CERT` / `_KEY` | — | phục vụ HTTPS trực tiếp (tối thiểu TLS 1.2) |
+| `WEB_TERMINAL_HSTS_DAYS` | `0` (tắt) | gửi Strict-Transport-Security, khi app đã ở một tên miền của bạn |
 | `WEB_TERMINAL_ADDRESS` | tự tìm | địa chỉ các máy khác dùng để tới máy này |
 | `CLAUDE_BIN` | tự dò | đường dẫn tới `claude` |
 
@@ -346,9 +349,13 @@ nó. Nó được làm ra để đó là thứ *duy nhất* một người vào 
 - **File:** trình quản lý file bị giới hạn trong `WEB_TERMINAL_ROOTS`, kiểm tra sau khi đã phân giải symlink và
   junction; từ chối đường dẫn UNC và tên dành riêng; upload bị chặn theo cả dung lượng khai báo *lẫn* thực nhận.
 - **Git:** chỉ đọc, chạy bằng `execFile` với mảng tham số — không qua shell.
+- **Giữa các máy:** kênh PTY là TLS 1.2 với bộ mã PSK, khoá là `.data/host.key` của chính máy đó — **không có
+  chứng chỉ nào phải tạo hay phải tin**, vì khoá mà liên kết vốn đã dùng chính là khoá mã hoá. Key sai giờ rớt
+  ở bước bắt tay TLS chứ không vào tới giao thức, và kẻ đứng giữa không thể giả làm PTY host khi không có key.
+  Dù vậy vẫn nên giữ trong LAN hoặc VPN.
 - **Log** không bao giờ chứa mật khẩu, token, hay nội dung gõ vào / in ra từ terminal.
-- **Chưa bao phủ:** liên kết giữa các máy không mã hoá (chỉ LAN/VPN), và đọc chính tả gửi âm thanh tới dịch vụ
-  nhận dạng giọng nói của Apple hoặc Google thông qua trình duyệt.
+- **Chưa bao phủ:** đọc chính tả gửi âm thanh tới dịch vụ nhận dạng giọng nói của Apple hoặc Google thông qua
+  trình duyệt.
 
 Trước khi mở ra ngoài: đổi mật khẩu mặc định, chạy dưới một tài khoản riêng có quyền tối thiểu, đừng bao giờ đặt
 `WEB_TERMINAL_ROOTS` là cả một ổ đĩa, và đặt HTTPS cùng Cloudflare Access (hoặc VPN) phía trước.
@@ -384,7 +391,8 @@ docs/     hướng dẫn chi tiết (tiếng Việt), ảnh chụp, kịch bản
 - **Khởi động lại máy là mất mọi terminal.** ConPTY không có cơ chế lưu/khôi phục tiến trình. Khôi phục phiên làm
   việc mở lại các tab ở đúng thư mục; phần lớn agent nối lại được cuộc hội thoại (`claude --continue`,
   `codex resume`).
-- **Liên kết giữa các máy không mã hoá** (xem trên).
+- **Máy chạy bản cũ hơn bản này** chỉ nói được giao thức thô: đánh dấu máy đó bằng
+  `node scripts/machines.js tls <máy> off` cho tới khi nâng cấp nó (xem [Bảo mật](#bảo-mật)).
 - **Windows PowerShell 5.1 + emoji:** PSReadLine ném `EncoderFallbackException` khi bạn gõ emoji (lệnh vẫn chạy).
   PowerShell 7 (`pwsh`) không bị. Tiếng Việt không bị ảnh hưởng.
 - **`Ctrl+Tab`** bị Chrome và Edge giữ; dùng `Alt+1..9`, `Ctrl+PageUp/PageDown` hoặc phím trên màn hình.
