@@ -636,6 +636,46 @@ host đang chạy chỉ ở `127.0.0.1` thì phải `-Restart` — **đóng mọ
 Địa chỉ của máy này được lấy từ chính kết nối nó mở tới máy khác; nếu đoán sai,
 đặt `WEB_TERMINAL_ADDRESS`.
 
+### Đặt máy chính ở máy ít khởi động lại nhất
+
+Điều quyết định: **khởi động lại web server không làm mất terminal nào** — nó chỉ
+là cái hiển thị. Chỉ PTY host mới giữ các phiên ConPTY, nên chỉ khi nó chết mới
+mất terminal. Vì vậy máy chính nên là máy bạn ít tắt/khởi động lại nhất, và trên
+máy đó hai tiến trình phải được tách rõ vai:
+
+| Tiến trình | Khởi động lại | Khi nào cần chạm tới |
+|---|---|---|
+| PTY host | **mất mọi terminal của máy đó** | chỉ khi đổi `server/profiles.js`, đổi `PTY_HOST_BIND`/`PTY_HOST_TLS`, hoặc nâng cấp code phần PTY |
+| Web server | không mất gì | mọi thay đổi khác: giao diện, API, cấu hình web, HSTS, sau `git pull` |
+
+Cài thường trú (chạy lại sau khi Windows khởi động, tự chạy lại khi lỗi):
+
+```powershell
+node scripts\hash-password.js "mat khau manh"     # lấy hash
+.\scripts\install-service.ps1 -PasswordHash "scrypt$..." -Roots "D:\work"
+```
+
+Nó tạo hai Scheduled Task — `WebTerminal-PtyHost` rồi `WebTerminal-Web` sau 20
+giây — và đọc cấu hình từ biến môi trường **mức Machine** để cả hai cùng thấy.
+
+Đừng chạy dưới SYSTEM (`-RunAsSystem`, và `install-pty-host-task.ps1` mặc định là
+SYSTEM) nếu bạn dùng agent trên máy đó: agent lấy thông tin đăng nhập từ profile
+người dùng (`~/.claude`, `~/.codex`), chạy dưới SYSTEM là mất hết, và mọi terminal
+sẽ có quyền SYSTEM. Chạy dưới đúng tài khoản bạn vẫn làm việc.
+
+Sau khi chuyển, nhớ ba thứ đi theo máy chính:
+
+1. **Cloudflare tunnel** trỏ về web server của máy chính mới, không phải máy cũ.
+2. **Kênh mã hoá**: trên máy chính mới, bật cờ cho từng máy còn lại khi máy đó đã
+   chạy bản có TLS — `node scripts\machines.js tls <id|tên|số> on` (xem [Nhiều
+   máy](#nhiều-máy)).
+3. **Agent bạn dùng để phát triển chính dự án này** nên chạy ngay trên máy chính:
+   sửa code xong thì chỉ cần khởi động lại web server, không phải với sang máy
+   khác, và không phải restart PTY host vốn đang giữ các terminal của bạn.
+
+Máy cũ không mất vai trò gì: nó vẫn là một dòng trong `hosts.json`, terminal trên
+nó vẫn mở được từ giao diện của máy chính mới, miễn PTY host của nó nghe trên LAN.
+
 ---
 
 ## Giọng nói
